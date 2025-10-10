@@ -1,12 +1,14 @@
 from flask import Flask, render_template, request, redirect, session
 import sqlite3
 import requests
+from text_cleaner import preprocess_text
+from textblob import TextBlob
 
 app = Flask(__name__)
 app.secret_key = "your_secret_key"
 
 # -------------------- NEWS FETCH FUNCTION --------------------
-API_KEY = "Your API key"   # 🔹 replace with your NewsAPI key
+API_KEY = "Your API key"  # 🔹 replace with your NewsAPI key
 
 def fetch_news(query=None, language='en', page_size=5):
     # If query exists → search everything, else show top headlines
@@ -86,21 +88,51 @@ def login():
             return "❌ Invalid username or password!"
     return render_template("login.html")
 
+from textblob import TextBlob
+from text_cleaner import preprocess_text
+
 @app.route("/dashboard", methods=["GET", "POST"])
 def dashboard():
     if "username" not in session:
         return redirect("/login")
 
     query = None
-    if request.method == "POST":
-        query = request.form["query"]
-        page_size = int(request.form["page_size"])
-        news_items = fetch_news(query, page_size=page_size)
-    else:
-        # Default -> Top headlines
-        news_items = fetch_news("latest", page_size=5)
+    corrected_query = None
+    news_items = []
 
-    return render_template("dashboard.html", news=news_items, user=session["username"], query=query)
+    if request.method == "POST":
+        query = request.form.get("query", "").strip()
+        page_size = int(request.form.get("page_size", 5))
+
+        #  Auto-correct using TextBlob
+        blob = TextBlob(query)
+        corrected_query = str(blob.correct()).strip()
+
+        print(f"Original: {query} → Corrected: {corrected_query}")
+
+        #  If correction is weird, fallback to original
+        if not corrected_query or corrected_query.lower() == "i":
+            corrected_query = query
+
+        #  Use the corrected query for fetching news
+        news_items = fetch_news(corrected_query, page_size=page_size)
+
+    else:
+        corrected_query = "latest"
+        news_items = fetch_news(corrected_query, page_size=5)
+
+    #  Clean descriptions
+    for news in news_items:
+        desc = news.get("description")
+        news["clean_description"] = preprocess_text(desc) if desc else "No description available."
+
+    return render_template(
+        "dashboard.html",
+        news=news_items,
+        user=session["username"],
+        query=query,
+        corrected_query=corrected_query
+    )
 
 
 @app.route("/logout")
